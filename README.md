@@ -337,11 +337,4 @@ All logs are written to the `diagnostics/` folder, which is created automaticall
 | `diagnostics/validate_pipeline/validate_pipeline.log` | Validation results |
 | `diagnostics/build_star_schema/build_star_schema.log` | Star schema build log |
 
----
 
-## Security Notes
-
-- **Never commit `config.env`** — it contains all credentials. It is already listed in `.gitignore`.
-- All passwords are scrubbed from log output before writing (`***` is substituted).
-- The pipeline uses parameterised queries and validated database/table names to prevent SQL injection.
-- Reference data CSVs may contain sensitive business data — review before committing.

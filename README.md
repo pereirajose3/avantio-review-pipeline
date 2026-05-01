@@ -1,7 +1,5 @@
 # avantio-review-pipeline
 
-# avantio-review-pipeline
-
 A fully automated ETL pipeline that collects guest reviews from the **Avantio API**, stores them in **MongoDB**, and progressively transforms them through a layered **MySQL** architecture — raw → clean → relational — with built-in validation, alerting, and scheduling support.
 
 ---
@@ -34,6 +32,7 @@ This project automates the full lifecycle of guest review data for a property ma
 5. Cleans and standardises the data into a clean MySQL layer
 6. Builds a fully normalised relational schema ready for reporting or BI tools
 7. Validates data consistency across all three database layers
+8. Builds a **star schema** optimised for BI tools and dashboards (e.g. Power BI), using a blue/green swap to keep the live database available with zero downtime during rebuilds
 
 The pipeline is orchestrated by a single script (`run_pipeline.py`) that handles step sequencing, soft/hard failure modes, email alerting, and lock-file protection against concurrent runs.
 
@@ -48,16 +47,20 @@ Avantio PMS API
   MongoDB (raw reviews)
       │
       ▼
-  MySQL — flh_raw        ← also receives CSV reference data
+  MySQL — flh_raw           ← also receives CSV reference data
       │
       ▼
   MySQL — flh_clean
       │
       ▼
-  MySQL — flh_relational  ← ready for reporting / BI
+  MySQL — flh_relational    ← normalised relational schema
       │
       ▼
   Validation (cross-layer consistency checks)
+      │
+      ▼
+  MySQL — flh_star          ← star schema for Power BI / dashboards
+        (built in flh_star_shadow, then swapped live with zero downtime)
 ```
 
 ---
@@ -77,6 +80,7 @@ avantio-review-pipeline/
 ├── mysql_data_cleaning.py               # Step 4 — MySQL raw → MySQL clean
 ├── build_relational_schema.py           # Step 5 — MySQL clean → MySQL relational
 ├── validate_pipeline.py                 # Step 6 — Cross-layer validation
+├── build_star_schema.py                 # Step 7 — MySQL relational → star schema
 │
 ├── reference_data/                      # CSV reference files (not committed)
 │   ├── IdAvantio.csv
@@ -90,7 +94,8 @@ avantio-review-pipeline/
     ├── load_reference_data_to_mysql_raw/
     ├── mysql_data_cleaning/
     ├── build_relational_schema/
-    └── validate_pipeline/
+    ├── validate_pipeline/
+    └── build_star_schema/
 ```
 
 ---
@@ -129,6 +134,7 @@ pymongo
 mysql-connector-python
 sqlalchemy
 pandas
+numpy
 python-dotenv
 ```
 
@@ -162,6 +168,8 @@ MYSQL_PASSWORD=your_mysql_password
 MYSQL_RAW_DATABASE=flh_raw
 MYSQL_CLEAN_DATABASE=flh_clean
 MYSQL_REL_DATABASE=flh_relational
+MYSQL_STAR_DATABASE=flh_star
+MYSQL_STAR_SHADOW_DATABASE=flh_star_shadow
 
 # ── Email Alerts ──────────────────────────────────────────
 ALERT_EMAIL_FROM=your_email@gmail.com
@@ -244,6 +252,7 @@ Make sure `run_pipeline.sh` points to the correct Python interpreter and project
 | 4 | `mysql_data_cleaning.py` | MySQL raw → MySQL clean | **Hard** — pipeline halts |
 | 5 | `build_relational_schema.py` | MySQL clean → MySQL relational | **Hard** — pipeline halts |
 | 6 | `validate_pipeline.py` | Cross-layer consistency checks | **Soft** — pipeline continues |
+| 7 | `build_star_schema.py` | MySQL relational → star schema | **Hard** — pipeline halts |
 
 **Soft fail:** an alert email is sent but the remaining steps still run.  
 **Hard fail:** an alert email is sent and the pipeline stops immediately.
@@ -258,6 +267,30 @@ Make sure `run_pipeline.sh` points to the correct Python interpreter and project
 - No nulls in required business columns
 - No orphaned review aspects (aspects without a matching review)
 - Avantio IDs and review IDs are consistent across layers
+
+### Star schema (flh_star)
+
+`build_star_schema.py` reads from `flh_relational` and builds a star schema in `flh_star`, optimised for Power BI and other BI tools.
+
+**Dimension tables**
+
+| Table | Description |
+|-------|-------------|
+| `dim_date` | Calendar dimension with year, quarter, month, week, day, and weekend flag — covering all dates present in the review data |
+| `dim_property` | Property master data merged with Avantio ID mapping, including amenity labels and active/inactive status |
+| `dim_sales_channel` | Booking channel dimension (Airbnb, Booking.com, HomeAway/VRBO, Direct) with a human-readable label |
+| `dim_aspect` | Review aspect dimension (Location, Cleanliness, Value for Money, Service, Accommodation, etc.) |
+
+**Fact tables**
+
+| Table | Description |
+|-------|-------------|
+| `fact_reviews` | One row per review — links to all four dimensions via surrogate keys, plus measures: overall score, stay length, response flag, comment flags |
+| `fact_review_aspects` | One row per aspect score — links to `dim_aspect`, `dim_property`, `dim_sales_channel`, and `dim_date` |
+
+**Blue/green swap (zero-downtime rebuild)**
+
+The star schema is always built into a shadow database (`flh_star_shadow`) first. Once the build succeeds, all tables are atomically swapped into the live database (`flh_star`) using MySQL `RENAME TABLE`. Power BI reads from `flh_star` throughout and is never exposed to a partially built state. If the build fails, `flh_star` remains unchanged.
 
 ---
 
@@ -275,6 +308,7 @@ All logs are written to the `diagnostics/` folder, which is created automaticall
 | `diagnostics/mysql_data_cleaning/data_cleaning.log` | Cleaning step log |
 | `diagnostics/build_relational_schema/build_relational_schema.log` | Schema build log |
 | `diagnostics/validate_pipeline/validate_pipeline.log` | Validation results |
+| `diagnostics/build_star_schema/build_star_schema.log` | Star schema build log |
 
 ---
 

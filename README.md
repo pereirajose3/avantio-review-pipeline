@@ -268,6 +268,33 @@ Make sure `run_pipeline.sh` points to the correct Python interpreter and project
 - No orphaned review aspects (aspects without a matching review)
 - Avantio IDs and review IDs are consistent across layers
 
+### Relational model (flh_relational)
+
+`build_relational_schema.py` reads from `flh_clean` and builds a normalised relational schema in `flh_relational`, with proper data types, primary keys, indexes, and foreign key constraints.
+
+**Tables**
+
+| Table | Description |
+|-------|-------------|
+| `properties` | One row per property — includes team, neighbourhood, floor, postcode, GPS coordinates (split into `latitude` and `longitude`), occupancy, amenities (elevator, washing machine, dishwasher, air conditioning, self check-in), and active/inactive status |
+| `property_id_mapping` | Maps each internal `flh_property_id` to its corresponding `avantio_property_id` — used to join reviews (which carry the Avantio ID) to properties (which carry the internal ID) |
+| `reviews` | One row per guest review — includes booking ID, sales channel, arrival and departure dates, overall score, language, guest name, positive/negative comments, and response text and date |
+| `review_aspects` | One row per scored aspect per review — each review can have multiple aspect scores (e.g. Location, Cleanliness, Value for Money, Service, Accommodation) linked back to `reviews` via a foreign key |
+
+**Key design decisions**
+
+- GPS coordinates stored as a combined string in the source are split into separate `latitude` and `longitude` float columns.
+- Four near-empty operational columns are dropped from `reviews` during this step (`hash_evaluationaspects`, `is_eligible_for_response`, `external_response_status`, `likes_count`).
+- The foreign key between `property_id_mapping` and `properties` is intentionally not enforced — the mapping file contains historical property IDs that no longer exist in the current properties table. Joins use `LEFT JOIN` to handle this gracefully.
+- Similarly, the foreign key between `reviews` and `property_id_mapping` is not enforced — a small number of reviews reference Avantio property IDs not present in the mapping (properties added in Avantio after the mapping file was last exported).
+- `review_aspects` enforces a cascading foreign key to `reviews` — deleting a review automatically removes its aspect scores.
+
+**Blue/green swap (zero-downtime rebuild)**
+
+The relational schema is always built into a staging database (`flh_relational_new`) first. Once all four tables are built successfully, they are atomically swapped into the live database (`flh_relational`) using a single MySQL `RENAME TABLE` statement. The previous live data is briefly moved to `flh_relational_old` and then dropped. If the build fails at any point, `flh_relational` remains completely unchanged.
+
+---
+
 ### Star schema (flh_star)
 
 `build_star_schema.py` reads from `flh_relational` and builds a star schema in `flh_star`, optimised for Power BI and other BI tools.

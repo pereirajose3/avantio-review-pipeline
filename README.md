@@ -47,20 +47,20 @@ Avantio PMS API
   MongoDB (raw reviews)
       │
       ▼
-  MySQL — flh_raw           ← also receives CSV reference data
+  MySQL — acme_raw           ← also receives CSV reference data
       │
       ▼
-  MySQL — flh_clean
+  MySQL — acme_clean
       │
       ▼
-  MySQL — flh_relational    ← normalised relational schema
+  MySQL — acme_relational    ← normalised relational schema
       │
       ▼
   Validation (cross-layer consistency checks)
       │
       ▼
-  MySQL — flh_star          ← star schema for Power BI / dashboards
-        (built in flh_star_shadow, then swapped live with zero downtime)
+  MySQL — acme_star          ← star schema for Power BI / dashboards
+        (built in acme_star_shadow, then swapped live with zero downtime)
 ```
 
 ---
@@ -158,18 +158,18 @@ MONGO_USER=your_mongo_user
 MONGO_PASSWORD=your_mongo_password
 MONGO_AUTH_SOURCE=admin
 MONGO_TIMEOUT=5000
-MONGO_DB_NAME=flh
+MONGO_DB_NAME=acme
 MONGO_COLLECTION_REVIEWS=reviews
 
 # ── MySQL ─────────────────────────────────────────────────
 MYSQL_HOST=127.0.0.1
 MYSQL_USER=root
 MYSQL_PASSWORD=your_mysql_password
-MYSQL_RAW_DATABASE=flh_raw
-MYSQL_CLEAN_DATABASE=flh_clean
-MYSQL_REL_DATABASE=flh_relational
-MYSQL_STAR_DATABASE=flh_star
-MYSQL_STAR_SHADOW_DATABASE=flh_star_shadow
+MYSQL_RAW_DATABASE=acme_raw
+MYSQL_CLEAN_DATABASE=acme_clean
+MYSQL_REL_DATABASE=acme_relational
+MYSQL_STAR_DATABASE=acme_star
+MYSQL_STAR_SHADOW_DATABASE=acme_star_shadow
 
 # ── Email Alerts ──────────────────────────────────────────
 ALERT_EMAIL_FROM=your_email@gmail.com
@@ -268,16 +268,16 @@ Make sure `run_pipeline.sh` points to the correct Python interpreter and project
 - No orphaned review aspects (aspects without a matching review)
 - Avantio IDs and review IDs are consistent across layers
 
-### Relational model (flh_relational)
+### Relational model (acme_relational)
 
-`build_relational_schema.py` reads from `flh_clean` and builds a normalised relational schema in `flh_relational`, with proper data types, primary keys, indexes, and foreign key constraints.
+`build_relational_schema.py` reads from `acme_clean` and builds a normalised relational schema in `acme_relational`, with proper data types, primary keys, indexes, and foreign key constraints.
 
 **Tables**
 
 | Table | Description |
 |-------|-------------|
 | `properties` | One row per property — includes team, neighbourhood, floor, postcode, GPS coordinates (split into `latitude` and `longitude`), occupancy, amenities (elevator, washing machine, dishwasher, air conditioning, self check-in), and active/inactive status |
-| `property_id_mapping` | Maps each internal `flh_property_id` to its corresponding `avantio_property_id` — used to join reviews (which carry the Avantio ID) to properties (which carry the internal ID) |
+| `property_id_mapping` | Maps each internal `acme_property_id` to its corresponding `avantio_property_id` — used to join reviews (which carry the Avantio ID) to properties (which carry the internal ID) |
 | `reviews` | One row per guest review — includes booking ID, sales channel, arrival and departure dates, overall score, language, guest name, positive/negative comments, and response text and date |
 | `review_aspects` | One row per scored aspect per review — each review can have multiple aspect scores (e.g. Location, Cleanliness, Value for Money, Service, Accommodation) linked back to `reviews` via a foreign key |
 
@@ -291,13 +291,13 @@ Make sure `run_pipeline.sh` points to the correct Python interpreter and project
 
 **Blue/green swap (zero-downtime rebuild)**
 
-The relational schema is always built into a staging database (`flh_relational_new`) first. Once all four tables are built successfully, they are atomically swapped into the live database (`flh_relational`) using a single MySQL `RENAME TABLE` statement. The previous live data is briefly moved to `flh_relational_old` and then dropped. If the build fails at any point, `flh_relational` remains completely unchanged.
+The relational schema is always built into a staging database (`acme_relational_new`) first. Once all four tables are built successfully, they are atomically swapped into the live database (`acme_relational`) using a single MySQL `RENAME TABLE` statement. The previous live data is briefly moved to `acme_relational_old` and then dropped. If the build fails at any point, `acme_relational` remains completely unchanged.
 
 ---
 
-### Star schema (flh_star)
+### Star schema (acme_star)
 
-`build_star_schema.py` reads from `flh_relational` and builds a star schema in `flh_star`, optimised for Power BI and other BI tools.
+`build_star_schema.py` reads from `acme_relational` and builds a star schema in `acme_star`, optimised for Power BI and other BI tools.
 
 **Dimension tables**
 
@@ -317,7 +317,7 @@ The relational schema is always built into a staging database (`flh_relational_n
 
 **Blue/green swap (zero-downtime rebuild)**
 
-The star schema is always built into a shadow database (`flh_star_shadow`) first. Once the build succeeds, all tables are atomically swapped into the live database (`flh_star`) using MySQL `RENAME TABLE`. Power BI reads from `flh_star` throughout and is never exposed to a partially built state. If the build fails, `flh_star` remains unchanged.
+The star schema is always built into a shadow database (`acme_star_shadow`) first. Once the build succeeds, all tables are atomically swapped into the live database (`acme_star`) using MySQL `RENAME TABLE`. Power BI reads from `acme_star` throughout and is never exposed to a partially built state. If the build fails, `acme_star` remains unchanged.
 
 ---
 
@@ -337,4 +337,11 @@ All logs are written to the `diagnostics/` folder, which is created automaticall
 | `diagnostics/validate_pipeline/validate_pipeline.log` | Validation results |
 | `diagnostics/build_star_schema/build_star_schema.log` | Star schema build log |
 
+---
 
+## Security Notes
+
+- **Never commit `config.env`** — it contains all credentials. It is already listed in `.gitignore`.
+- All passwords are scrubbed from log output before writing (`***` is substituted).
+- The pipeline uses parameterised queries and validated database/table names to prevent SQL injection.
+- Reference data CSVs may contain sensitive business data — review before committing.

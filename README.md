@@ -2,7 +2,7 @@
 
 A fully automated ETL pipeline that collects guest reviews from the **Avantio API**, stores them in **MongoDB**, and progressively transforms them through a layered **MySQL** architecture — raw → clean → relational — with built-in validation, alerting, and scheduling support.
 
----
+--- 
 
 ## Table of Contents
 
